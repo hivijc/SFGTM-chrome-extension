@@ -24,13 +24,12 @@
     .hero-logo {
       width: 72px;
       height: 72px;
-      border-radius: 16px;
-      background: rgba(255,255,255,0.15);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      border-radius: 50%;
+      object-fit: cover;
       margin: 0 auto 16px;
-      font-size: 36px;
+      display: block;
+      border: 3px solid rgba(255,255,255,0.3);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15);
     }
 
     .hero h1 {
@@ -631,7 +630,7 @@
 
   <!-- Hero -->
   <div class="hero">
-    <div class="hero-logo">N</div>
+    <img class="hero-logo" src="nat-avatar.png" alt="Nat-vigator" />
     <h1>Install Nat-vigator</h1>
     <p>Research LinkedIn prospects, generate AI intelligence, and push contacts to HubSpot &mdash; all from your sidebar.</p>
   </div>
