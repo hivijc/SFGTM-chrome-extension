@@ -563,35 +563,66 @@
   }
 
   // ── Delayed re-extraction for lazy-loaded Experience section ──
-  // LinkedIn lazy-loads the Experience section as the user scrolls.
-  // We watch for it to appear and update the sidebar with better data.
+  // LinkedIn lazy-loads the Experience section below the fold.
+  // We use both a MutationObserver AND timed retries to catch it.
   let expObserver = null;
+  let expRetryTimer = null;
   function watchForExperience(profile) {
     if (expObserver) { expObserver.disconnect(); expObserver = null; }
+    if (expRetryTimer) { clearTimeout(expRetryTimer); expRetryTimer = null; }
     if (!profile || profile.type !== "person") return;
 
-    // If experience section already found data, no need to watch
-    const expSection = document.querySelector("#experience");
-    if (expSection) return;
+    function tryReExtract() {
+      const updated = extractPersonData();
+      // Only update if we got better data from Experience section
+      if (updated.jobTitle && updated.jobTitle !== profile.jobTitle) {
+        currentProfile = updated;
+        showProfilePreview(updated);
+        console.log("[Nat-vigator] Updated from Experience:", { jobTitle: updated.jobTitle, companyName: updated.companyName });
+        return true;
+      }
+      return false;
+    }
 
-    // Watch the DOM for #experience to appear
+    // If experience section is already in DOM, extract immediately
+    if (document.querySelector("#experience")) {
+      tryReExtract();
+      return;
+    }
+
+    // Strategy 1: MutationObserver — fires as soon as #experience appears
     expObserver = new MutationObserver(() => {
-      const exp = document.querySelector("#experience");
-      if (exp) {
-        console.log("[Nat-vigator] Experience section appeared, re-extracting...");
+      if (document.querySelector("#experience")) {
         expObserver.disconnect();
         expObserver = null;
-        const updated = extractPersonData();
-        if (updated.jobTitle && updated.jobTitle !== profile.jobTitle) {
-          currentProfile = updated;
-          showProfilePreview(updated);
-          console.log("[Nat-vigator] Updated sidebar:", { jobTitle: updated.jobTitle, companyName: updated.companyName });
-        }
+        if (expRetryTimer) { clearTimeout(expRetryTimer); expRetryTimer = null; }
+        tryReExtract();
       }
     });
     expObserver.observe(document.body, { childList: true, subtree: true });
-    // Stop watching after 15s to avoid leaks
-    setTimeout(() => { if (expObserver) { expObserver.disconnect(); expObserver = null; } }, 15000);
+
+    // Strategy 2: Timed retries at 2s, 4s, 7s — catches cases MutationObserver misses
+    const retryDelays = [2000, 4000, 7000];
+    let retryIndex = 0;
+    function scheduleRetry() {
+      if (retryIndex >= retryDelays.length) return;
+      expRetryTimer = setTimeout(() => {
+        if (document.querySelector("#experience")) {
+          if (expObserver) { expObserver.disconnect(); expObserver = null; }
+          tryReExtract();
+        } else {
+          retryIndex++;
+          scheduleRetry();
+        }
+      }, retryDelays[retryIndex]);
+    }
+    scheduleRetry();
+
+    // Cleanup after 15s
+    setTimeout(() => {
+      if (expObserver) { expObserver.disconnect(); expObserver = null; }
+      if (expRetryTimer) { clearTimeout(expRetryTimer); expRetryTimer = null; }
+    }, 15000);
   }
 
   // ── SPA navigation detection ──
