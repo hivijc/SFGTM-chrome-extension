@@ -100,8 +100,11 @@
         </div>
         <!-- Loading -->
         <div id="nv-loading" class="nv-screen nv-hidden">
-          <div class="nv-spinner"></div>
-          <p class="nv-msg" id="nv-loading-msg">Researching...</p>
+          <div class="nv-progress-bar"><div class="nv-progress-fill" id="nv-loading-fill"></div></div>
+          <div class="nv-progress-dots" id="nv-loading-dots">
+            <span class="nv-dot"></span><span class="nv-dot"></span><span class="nv-dot"></span><span class="nv-dot"></span>
+          </div>
+          <p class="nv-msg" id="nv-loading-msg">Starting research...</p>
         </div>
         <!-- Success + Intelligence -->
         <div id="nv-success" class="nv-screen nv-hidden">
@@ -111,8 +114,11 @@
           <!-- Intelligence section -->
           <div id="nv-intel">
             <div id="nv-intel-loading">
-              <div class="nv-spinner-sm"></div>
-              <p class="nv-msg nv-intel-label">Generating intelligence...</p>
+              <div class="nv-progress-bar nv-progress-sm"><div class="nv-progress-fill" id="nv-intel-fill"></div></div>
+              <div class="nv-progress-dots nv-progress-dots-sm" id="nv-intel-dots">
+                <span class="nv-dot"></span><span class="nv-dot"></span><span class="nv-dot"></span><span class="nv-dot"></span>
+              </div>
+              <p class="nv-msg nv-intel-label" id="nv-intel-step-label">Looking up prospect...</p>
             </div>
             <div id="nv-intel-content" class="nv-hidden">
               <!-- Pain points -->
@@ -168,9 +174,8 @@
           </div>
         </div>
         <div id="nv-prefs">
-          <button id="nv-prefs-toggle" class="nv-collapse-toggle nv-prefs-toggle-btn">
-            <span>Preferences</span>
-            <span id="nv-prefs-arrow" class="nv-arrow">&#9656;</span>
+          <button id="nv-prefs-toggle" class="nv-prefs-toggle-btn">
+            <span class="nv-prefs-gear">&#9881;</span>
           </button>
           <div id="nv-prefs-content" class="nv-hidden">
             <div class="nv-pref-row">
@@ -314,15 +319,7 @@
   // ── Preferences toggle ──
   $("#nv-prefs-toggle").addEventListener("click", () => {
     const content = $("#nv-prefs-content");
-    const arrow = $("#nv-prefs-arrow");
-    const isHidden = content.classList.contains("nv-hidden");
-    if (isHidden) {
-      content.classList.remove("nv-hidden");
-      arrow.innerHTML = "&#9662;"; // ▾
-    } else {
-      content.classList.add("nv-hidden");
-      arrow.innerHTML = "&#9656;"; // ▶
-    }
+    content.classList.toggle("nv-hidden");
   });
 
   // ── Position toggle buttons (L / R) ──
@@ -451,7 +448,7 @@
   }
 
   // ── SPA navigation detection ──
-  function onPageChange() {
+  async function onPageChange() {
     stopBriefPolling();
     const profile = extractProfile();
     currentProfile = profile;
@@ -460,6 +457,36 @@
     if (!profile) {
       showScreen("no-profile");
       return;
+    }
+
+    // Auto-check: does this prospect already exist in the system?
+    if (profile.type === "person" && profile.url) {
+      try {
+        const res = await api("GET", `/api/contacts/lookup?url=${encodeURIComponent(profile.url)}`);
+        if (res.ok && res.data?.data) {
+          const d = res.data.data;
+          currentContactId = d.contactId;
+          const viewUrl = `${API_BASE}/contacts/${d.contactId}`;
+
+          // Already has a brief — show it immediately
+          if (d.brief) {
+            showSuccess(true, viewUrl, "person");
+            renderBrief(d.brief);
+            return;
+          }
+
+          // Research in progress — show progress bar and start polling
+          if (d.status === "in_progress") {
+            showSuccess(true, viewUrl, "person");
+            startBriefPolling(d.contactId);
+            return;
+          }
+
+          // Exists but no brief (failed/pending) — show preview with "Research" button
+        }
+      } catch {
+        // Lookup failed — fall through to normal preview
+      }
     }
 
     showProfilePreview(profile);
@@ -540,10 +567,56 @@
     $("#nv-research-btn").onclick = () => researchProfile(profile);
   }
 
+  // ── Progress bar helpers ──
+  const RESEARCH_STEPS = [
+    { key: "prospect_lookup",    label: "Looking up prospect...",          pct: 20 },
+    { key: "company_enrichment", label: "Enriching company data...",       pct: 45 },
+    { key: "industry_analysis",  label: "Analyzing industry fit...",       pct: 65 },
+    { key: "ai_intelligence",    label: "Generating AI intelligence...",   pct: 85 },
+  ];
+
+  function updateProgressBar(fillId, dotsId, labelId, step, status) {
+    const fillEl = $(`#${fillId}`);
+    const dotsEl = $(`#${dotsId}`);
+    const labelEl = $(`#${labelId}`);
+    if (!fillEl) return;
+
+    const isCompleted = status === "completed";
+    const isFailed = status === "failed";
+
+    let stepIdx = 0;
+    if (step) {
+      const idx = RESEARCH_STEPS.findIndex(s => s.key === step);
+      if (idx >= 0) stepIdx = idx;
+    }
+    if (isCompleted) stepIdx = RESEARCH_STEPS.length;
+
+    const pct = isCompleted ? 100 : isFailed ? 0 : (RESEARCH_STEPS[stepIdx]?.pct ?? 10);
+    const label = isCompleted
+      ? "Done!"
+      : isFailed
+        ? "Research failed"
+        : (RESEARCH_STEPS[stepIdx]?.label ?? "Starting research...");
+
+    fillEl.style.width = pct + "%";
+    fillEl.style.background = isFailed ? "#ef4444" : "#7c3aed";
+    if (labelEl) labelEl.textContent = label;
+
+    // Update dots
+    if (dotsEl) {
+      const dots = dotsEl.querySelectorAll(".nv-dot");
+      dots.forEach((dot, i) => {
+        dot.className = "nv-dot";
+        if (i < stepIdx || isCompleted) dot.classList.add("nv-dot-done");
+        else if (i === stepIdx && !isFailed) dot.classList.add("nv-dot-active");
+      });
+    }
+  }
+
   // ── Research ──
   async function researchProfile(profile) {
     showScreen("loading");
-    $("#nv-loading-msg").textContent = "Researching...";
+    updateProgressBar("nv-loading-fill", "nv-loading-dots", "nv-loading-msg", null);
 
     const body = { url: profile.url, folderId: currentFolderId || undefined };
 
@@ -595,6 +668,7 @@
     // Reset intelligence section
     $("#nv-intel-loading").classList.remove("nv-hidden");
     $("#nv-intel-content").classList.add("nv-hidden");
+    updateProgressBar("nv-intel-fill", "nv-intel-dots", "nv-intel-step-label", null);
     $("#nv-outbound-content").classList.add("nv-hidden");
     $("#nv-outbound-arrow").innerHTML = "&#9656;";
 
@@ -637,9 +711,23 @@
       attempts++;
       try {
         const res = await api("GET", `/api/contacts/${contactId}/brief`);
-        if (res.ok && res.data?.data?.brief) {
+        const d = res.data?.data;
+
+        // Update progress bar with current step
+        if (d) {
+          updateProgressBar("nv-intel-fill", "nv-intel-dots", "nv-intel-step-label", d.step, d.status);
+        }
+
+        if (res.ok && d?.brief) {
           stopBriefPolling();
-          renderBrief(res.data.data.brief);
+          renderBrief(d.brief);
+          return;
+        }
+
+        // Check for failure
+        if (d?.status === "failed") {
+          stopBriefPolling();
+          updateProgressBar("nv-intel-fill", "nv-intel-dots", "nv-intel-step-label", null, "failed");
           return;
         }
       } catch {
@@ -819,7 +907,7 @@
         display: flex;
         align-items: flex-start;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.5;
         color: #1a1a2e;
       }
@@ -886,12 +974,12 @@
       }
 
       .nv-logo { width: 28px; height: 28px; border-radius: 50%; }
-      .nv-title { font-size: 13px; font-weight: 700; letter-spacing: -0.02em; }
-      .nv-subtitle { font-size: 9px; color: #6b7280; }
+      .nv-title { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+      .nv-subtitle { font-size: 11px; color: #6b7280; }
 
       #nv-badge {
         margin-left: auto;
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 600;
         color: #7c3aed;
         background: #f3f0ff;
@@ -935,7 +1023,7 @@
       .nv-hidden { display: none !important; }
 
       .nv-msg {
-        font-size: 12px;
+        font-size: 13px;
         color: #6b7280;
         text-align: center;
         margin-bottom: 10px;
@@ -955,7 +1043,7 @@
         border: 1px solid #e5e7eb;
         border-radius: 6px;
         background: #fff;
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 500;
         cursor: pointer;
         text-align: center;
@@ -980,9 +1068,9 @@
         margin-bottom: 10px;
       }
 
-      #nv-name { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
-      #nv-jobtitle { font-size: 11px; color: #6b7280; }
-      #nv-company { font-size: 11px; font-weight: 600; color: #7c3aed; margin-top: 3px; }
+      #nv-name { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+      #nv-jobtitle { font-size: 13px; color: #6b7280; }
+      #nv-company { font-size: 13px; font-weight: 600; color: #7c3aed; margin-top: 3px; }
       #nv-company:empty { display: none; }
 
       /* ── Buttons ── */
@@ -992,7 +1080,7 @@
         padding: 8px 12px;
         border: none;
         border-radius: 7px;
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 600;
         cursor: pointer;
         text-align: center;
@@ -1023,7 +1111,7 @@
         background: #fff;
         color: #ff7a59;
         border: 1px solid #ff7a59;
-        font-size: 11px;
+        font-size: 13px;
       }
       .nv-btn-hs-link:hover { background: #fff5f3; }
 
@@ -1038,7 +1126,7 @@
       .nv-error-text { color: #ef4444 !important; }
 
       .nv-status-error {
-        font-size: 10px;
+        font-size: 12px;
         text-align: center;
         margin-top: 5px;
         padding: 5px 8px;
@@ -1048,7 +1136,7 @@
       }
 
       .nv-status-success {
-        font-size: 10px;
+        font-size: 12px;
         text-align: center;
         margin-top: 5px;
         padding: 5px 8px;
@@ -1057,28 +1145,53 @@
         background: #ecfdf5;
       }
 
-      /* ── Spinner ── */
-      .nv-spinner {
-        width: 28px;
-        height: 28px;
-        border: 3px solid #e5e7eb;
-        border-top-color: #7c3aed;
-        border-radius: 50%;
-        animation: nv-spin 0.8s linear infinite;
-        margin: 12px auto 8px;
+      /* ── Progress bar ── */
+      .nv-progress-bar {
+        height: 6px;
+        background: #e5e7eb;
+        border-radius: 999px;
+        overflow: hidden;
+        margin: 14px 0 8px;
       }
-
-      .nv-spinner-sm {
-        width: 18px;
-        height: 18px;
-        border: 2px solid #e5e7eb;
-        border-top-color: #7c3aed;
-        border-radius: 50%;
-        animation: nv-spin 0.8s linear infinite;
-        margin: 8px auto 4px;
+      .nv-progress-bar.nv-progress-sm {
+        height: 5px;
+        margin: 10px 0 6px;
       }
-
-      @keyframes nv-spin { to { transform: rotate(360deg); } }
+      .nv-progress-fill {
+        height: 100%;
+        width: 10%;
+        background: #7c3aed;
+        border-radius: 999px;
+        transition: width 0.7s ease-out;
+      }
+      .nv-progress-dots {
+        display: flex;
+        justify-content: space-between;
+        padding: 0 2px;
+        margin-bottom: 8px;
+      }
+      .nv-progress-dots-sm {
+        margin-bottom: 6px;
+      }
+      .nv-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #d1d5db;
+        transition: background 0.4s, box-shadow 0.4s;
+      }
+      .nv-dot-done {
+        background: #7c3aed;
+      }
+      .nv-dot-active {
+        background: #7c3aed;
+        box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25);
+        animation: nv-pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes nv-pulse {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25); }
+        50% { box-shadow: 0 0 0 5px rgba(124, 58, 237, 0.1); }
+      }
 
       /* ── Intelligence section ── */
       #nv-intel {
@@ -1088,12 +1201,12 @@
       }
 
       .nv-intel-label {
-        font-size: 11px;
+        font-size: 13px;
         margin-bottom: 4px;
       }
 
       .nv-section-label {
-        font-size: 10px;
+        font-size: 11px;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.05em;
@@ -1111,14 +1224,14 @@
       }
 
       .nv-pp-problem {
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 600;
         color: #1a1a2e;
         line-height: 1.3;
       }
 
       .nv-pp-impact {
-        font-size: 10px;
+        font-size: 12px;
         color: #6b7280;
         margin-top: 2px;
         line-height: 1.3;
@@ -1136,7 +1249,7 @@
         padding: 7px 10px;
         margin-top: 8px;
         cursor: pointer;
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 600;
         color: #374151;
         transition: all 0.15s;
@@ -1149,7 +1262,7 @@
       }
 
       .nv-arrow {
-        font-size: 10px;
+        font-size: 12px;
         color: #9ca3af;
       }
 
@@ -1159,7 +1272,7 @@
       }
 
       .nv-outbound-label {
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 600;
         color: #374151;
         margin-bottom: 4px;
@@ -1169,7 +1282,7 @@
       .nv-outbound-label:first-child { margin-top: 0; }
 
       .nv-email-subject {
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 600;
         color: #1a1a2e;
         padding: 6px 8px;
@@ -1179,7 +1292,7 @@
       }
 
       .nv-email-body {
-        font-size: 10px;
+        font-size: 12px;
         color: #374151;
         padding: 6px 8px;
         background: #f9fafb;
@@ -1190,7 +1303,7 @@
       }
 
       .nv-call-content {
-        font-size: 10px;
+        font-size: 12px;
         color: #374151;
         padding: 6px 8px;
         background: #f9fafb;
@@ -1208,7 +1321,7 @@
       .nv-call-label {
         font-weight: 700;
         color: #7c3aed;
-        font-size: 9px;
+        font-size: 10px;
         text-transform: uppercase;
       }
 
@@ -1220,7 +1333,7 @@
         background: none;
         border: 1px solid #d1d5db;
         border-radius: 4px;
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 500;
         color: #6b7280;
         cursor: pointer;
@@ -1254,13 +1367,13 @@
       }
 
       .nv-credits-label {
-        font-size: 10px;
+        font-size: 12px;
         font-weight: 600;
         color: #6b7280;
       }
 
       #nv-credits-count {
-        font-size: 10px;
+        font-size: 12px;
         color: #9ca3af;
       }
 
@@ -1282,6 +1395,30 @@
       /* Preferences */
       .nv-prefs-toggle-btn {
         margin-top: 8px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 6px;
+        transition: background 0.15s;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .nv-prefs-toggle-btn:hover {
+        background: #f3f4f6;
+      }
+
+      .nv-prefs-gear {
+        font-size: 20px;
+        line-height: 1;
+        color: #9ca3af;
+        transition: color 0.15s;
+      }
+
+      .nv-prefs-toggle-btn:hover .nv-prefs-gear {
+        color: #6b7280;
       }
 
       #nv-prefs-content {
@@ -1296,7 +1433,7 @@
       }
 
       .nv-pref-label {
-        font-size: 11px;
+        font-size: 13px;
         color: #374151;
         font-weight: 500;
       }
@@ -1313,7 +1450,7 @@
         padding: 4px 12px;
         border: none;
         background: #fff;
-        font-size: 11px;
+        font-size: 13px;
         font-weight: 600;
         cursor: pointer;
         color: #6b7280;
