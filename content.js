@@ -421,20 +421,33 @@
     //   Simple:  <li> Title | "Company · Full-time" | "Date range" </li>
     //   Grouped: <li> Company | "Full-time · Duration" | <li> Title | "Date range" </li> </li>
     const expSection = document.querySelector("#experience");
+    console.log("[Nat-vigator] #experience found:", !!expSection);
     if (expSection) {
       const expList = expSection.closest("section");
+      console.log("[Nat-vigator] closest section found:", !!expList);
       if (expList) {
         const firstItem = expList.querySelector("li");
+        console.log("[Nat-vigator] first li found:", !!firstItem);
         if (firstItem) {
+          // Debug: dump all spans to see what LinkedIn gives us
+          const debugSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
+          console.log("[Nat-vigator] all spans in first li:", Array.from(debugSpans).map(s => s.textContent.trim()));
           const nestedLi = firstItem.querySelector("li");
+          console.log("[Nat-vigator] nested li (grouped layout):", !!nestedLi);
           if (nestedLi) {
             // ── Grouped layout: company is parent, title is in nested li ──
-            // Parent spans: ["Metro Singapore", "Full-time · 1 yr 2 mos", "On-site"]
-            // Nested spans: ["Head of Loyalty...", "May 2025 - Present · 11 mos"]
-            const parentSpans = firstItem.querySelectorAll(":scope > div span[aria-hidden='true']");
-            const parentTexts = Array.from(parentSpans).map(s => s.textContent.trim()).filter(Boolean);
-            const nestedSpans = nestedLi.querySelectorAll("span[aria-hidden='true']");
-            const nestedTexts = Array.from(nestedSpans).map(s => s.textContent.trim()).filter(Boolean);
+            // Use set subtraction: all spans minus nested spans = parent-only spans
+            const allSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
+            const nestedSpans = new Set(nestedLi.querySelectorAll("span[aria-hidden='true']"));
+            const parentTexts = Array.from(allSpans)
+              .filter(s => !nestedSpans.has(s))
+              .map(s => s.textContent.trim())
+              .filter(Boolean);
+            const nestedTexts = Array.from(nestedSpans)
+              .map(s => s.textContent.trim())
+              .filter(Boolean);
+            // Parent: ["Metro Singapore", "Full-time · 1 yr 2 mos", ...]
+            // Nested: ["Head of Loyalty...", "May 2025 - Present · 11 mos", ...]
             if (parentTexts.length >= 1) companyName = parentTexts[0];
             if (nestedTexts.length >= 1) jobTitle = nestedTexts[0];
           } else {
