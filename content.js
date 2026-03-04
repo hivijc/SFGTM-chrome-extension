@@ -75,7 +75,7 @@
         </div>
         <span id="nv-badge"></span>
         <div class="nv-header-actions">
-          <button id="nv-toggle-side" title="Move to other side">&#8644;</button>
+          <button id="nv-switch-user" title="Switch user">&#8644;</button>
           <button id="nv-close" title="Collapse">&times;</button>
         </div>
       </div>
@@ -270,9 +270,13 @@
     document.addEventListener("mouseup", onUp);
   });
 
-  $("#nv-toggle-side").addEventListener("click", () => {
-    sidebarSide = sidebarSide === "right" ? "left" : "right";
-    updatePosition();
+  $("#nv-switch-user").addEventListener("click", () => {
+    // Reset GPM selection and show the picker
+    currentGpmName = null;
+    currentFolderId = null;
+    chrome.storage.local.remove(["gpmName", "folderId"]);
+    $("#nv-badge").textContent = "";
+    showScreen("setup");
   });
 
   // Also toggle via extension icon click
