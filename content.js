@@ -379,9 +379,11 @@
           jobTitle = atParts[0].trim();
           companyName = atParts[1].trim();
         } else {
-          const companyPat = /\b(Pte\.?\s*Ltd|Inc|Corp|LLC|Ltd|GmbH|Sdn\s*Bhd|Co\.\s*Ltd|Group|Holdings|International|Enterprises?|Partners|Associates|Solutions|Consulting|Technologies|Services|Agency|Studio|Labs?)\b/i;
-          if (companyPat.test(roleCompany)) companyName = roleCompany;
-          else jobTitle = roleCompany;
+          // LinkedIn format without "at" is typically "Name - Company | LinkedIn"
+          // Only treat as jobTitle if it looks like a role (contains role keywords)
+          const rolePat = /\b(CEO|CTO|CFO|COO|CMO|VP|SVP|EVP|Director|Manager|Head|Lead|Founder|Co-founder|Chief|President|Officer|Engineer|Developer|Designer|Analyst|Consultant|Advisor|Specialist|Coordinator|Executive|Associate|Partner|Principal|Architect|Strategist)\b/i;
+          if (rolePat.test(roleCompany)) jobTitle = roleCompany;
+          else companyName = roleCompany;
         }
       }
     }
@@ -389,20 +391,70 @@
     if (!jobTitle || !companyName) {
       const ogDesc = getMeta("og:description");
       if (ogDesc) {
+        // Pattern 1: "Title at Company. Description..."
         const m = ogDesc.match(/^(.+?)\s+at\s+([^.·|]+)/i);
         if (m) {
           if (!jobTitle) jobTitle = m[1].trim();
           if (!companyName) companyName = m[2].trim();
         }
+        // Pattern 2: "... · Experience: Company Name · ..."
+        if (!companyName) {
+          const expMatch = ogDesc.match(/Experience:\s*([^·|]+)/i);
+          if (expMatch) companyName = expMatch[1].trim();
+        }
       }
     }
 
+    // ── DOM-based extraction (most reliable when logged in) ──
     if (!firstName) {
       const h1 = document.querySelector("h1");
       if (h1) {
         const parts = h1.textContent.trim().split(" ");
         firstName = parts[0] || "";
         lastName = parts.slice(1).join(" ") || "";
+      }
+    }
+
+    // Headline: the text right below the name, e.g. "Head of Marketing at Acme Corp"
+    if (!jobTitle || !companyName) {
+      const headline = document.querySelector(".text-body-medium.break-words");
+      if (headline) {
+        const text = headline.textContent.trim();
+        const atMatch = text.match(/^(.+?)\s+at\s+(.+)$/i);
+        if (atMatch) {
+          if (!jobTitle) jobTitle = atMatch[1].trim();
+          if (!companyName) companyName = atMatch[2].trim();
+        } else if (!jobTitle) {
+          // Headline might be just a title like "Marketing Lead" without "at Company"
+          jobTitle = text;
+        }
+      }
+    }
+
+    // Experience section: first entry is usually the current role
+    if (!jobTitle || !companyName) {
+      const expSection = document.querySelector("#experience");
+      if (expSection) {
+        const expList = expSection.closest("section");
+        if (expList) {
+          // Look for visually-hidden spans with role/company text
+          const spans = expList.querySelectorAll(".visually-hidden, .t-bold span, .t-14.t-normal span, .pvs-entity__caption-wrapper");
+          const texts = Array.from(spans).map(s => s.textContent.trim()).filter(Boolean);
+          // Also grab all text from the first list item
+          const firstItem = expList.querySelector("li");
+          if (firstItem) {
+            const itemSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
+            const itemTexts = Array.from(itemSpans).map(s => s.textContent.trim()).filter(Boolean);
+            // Typically: [title, company, date range, ...]
+            if (itemTexts.length >= 2) {
+              if (!jobTitle) jobTitle = itemTexts[0];
+              if (!companyName) {
+                // Company text may include " · Full-time" suffix — strip it
+                companyName = itemTexts[1].split("·")[0].trim();
+              }
+            }
+          }
+        }
       }
     }
 
