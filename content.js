@@ -126,6 +126,15 @@
                 <div class="nv-section-label">Pain Points</div>
                 <div id="nv-pp-list"></div>
               </div>
+              <!-- Similar Deals -->
+              <div id="nv-similar-deals" class="nv-hidden">
+                <div class="nv-section-label" style="display:flex;align-items:center;gap:6px;">
+                  Similar Deals
+                  <span id="nv-fit-badge" class="nv-fit-badge"></span>
+                </div>
+                <div id="nv-deals-summary" class="nv-deals-summary"></div>
+                <div id="nv-deals-list"></div>
+              </div>
               <!-- Outbound (collapsed) -->
               <div id="nv-outbound-section">
                 <button id="nv-outbound-toggle" class="nv-collapse-toggle">
@@ -975,6 +984,45 @@
         }
       }
 
+      // Similar Deals
+      const sd = brief.similarDeals;
+      const sdSection = $("#nv-similar-deals");
+      if (sd && sd.deals && sd.deals.length > 0) {
+        // Fit badge
+        const badge = $("#nv-fit-badge");
+        if (sd.fitSignal === "strong") {
+          badge.textContent = "Strong Fit";
+          badge.className = "nv-fit-badge nv-fit-strong";
+        } else if (sd.fitSignal === "potential") {
+          badge.textContent = "Potential Fit";
+          badge.className = "nv-fit-badge nv-fit-potential";
+        } else {
+          badge.textContent = "New Territory";
+          badge.className = "nv-fit-badge nv-fit-new";
+        }
+
+        // Summary
+        $("#nv-deals-summary").textContent = `${sd.wonCount} won / ${sd.dealCount} total deals in this segment`;
+
+        // Deal list
+        const dealsList = $("#nv-deals-list");
+        dealsList.innerHTML = "";
+        sd.deals.slice(0, 3).forEach((deal) => {
+          const row = document.createElement("div");
+          row.className = "nv-deal-row";
+          const name = deal.hubspotUrl
+            ? `<a href="${escHtml(deal.hubspotUrl)}" target="_blank" class="nv-deal-link">${escHtml(deal.dealName)} &#8599;</a>`
+            : `<span class="nv-deal-name">${escHtml(deal.dealName)}</span>`;
+          const amount = deal.amount ? `<span class="nv-deal-amount">$${Number(deal.amount).toLocaleString()}</span>` : "";
+          row.innerHTML = `<span class="nv-deal-icon">🏆</span>${name}${amount}`;
+          dealsList.appendChild(row);
+        });
+
+        sdSection.classList.remove("nv-hidden");
+      } else {
+        sdSection.classList.add("nv-hidden");
+      }
+
       // Show intelligence, hide loading
       $("#nv-intel-loading").classList.add("nv-hidden");
       $("#nv-intel-content").classList.remove("nv-hidden");
@@ -1416,6 +1464,87 @@
         color: #6b7280;
         margin-top: 2px;
         line-height: 1.3;
+      }
+
+      /* Similar Deals */
+      #nv-similar-deals {
+        margin-top: 10px;
+      }
+
+      .nv-fit-badge {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 1px 7px;
+        border-radius: 9px;
+        line-height: 1.6;
+      }
+
+      .nv-fit-strong {
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+      }
+
+      .nv-fit-potential {
+        background: #fef3c7;
+        color: #92400e;
+        border: 1px solid #fde68a;
+      }
+
+      .nv-fit-new {
+        background: #f3f4f6;
+        color: #6b7280;
+        border: 1px solid #e5e7eb;
+      }
+
+      .nv-deals-summary {
+        font-size: 11px;
+        color: #9ca3af;
+        margin-bottom: 6px;
+      }
+
+      .nv-deal-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        border: 1px solid #e5e7eb;
+        border-radius: 5px;
+        margin-bottom: 3px;
+        font-size: 12px;
+        background: #fefce8;
+      }
+
+      .nv-deal-icon {
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+
+      .nv-deal-link {
+        color: #7c3aed;
+        text-decoration: none;
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nv-deal-link:hover {
+        text-decoration: underline;
+      }
+
+      .nv-deal-name {
+        font-weight: 500;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nv-deal-amount {
+        margin-left: auto;
+        font-size: 11px;
+        color: #9ca3af;
+        flex-shrink: 0;
       }
 
       /* Outbound collapse */
