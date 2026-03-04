@@ -633,7 +633,9 @@
       }
     }
 
-    showProfilePreview(profile);
+    // Use currentProfile (may have been updated by MutationObserver with
+    // better Experience section data while the async lookup was running)
+    showProfilePreview(currentProfile || profile);
   }
 
   function checkForUrlChange() {
