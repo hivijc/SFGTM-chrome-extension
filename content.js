@@ -415,7 +415,29 @@
       }
     }
 
-    // Headline: the text right below the name, e.g. "Head of Marketing at Acme Corp"
+    // Experience section: ALWAYS read — this is the most accurate source for
+    // current job title and company. Overrides headline/meta tag data.
+    const expSection = document.querySelector("#experience");
+    if (expSection) {
+      const expList = expSection.closest("section");
+      if (expList) {
+        const firstItem = expList.querySelector("li");
+        if (firstItem) {
+          const itemSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
+          const itemTexts = Array.from(itemSpans).map(s => s.textContent.trim()).filter(Boolean);
+          // Typical order: [title, "Company · Full-time", "date range", ...]
+          if (itemTexts.length >= 2) {
+            const expTitle = itemTexts[0];
+            const expCompany = itemTexts[1].split("·")[0].trim();
+            // Experience data overrides meta tag / headline data
+            if (expTitle) jobTitle = expTitle;
+            if (expCompany) companyName = expCompany;
+          }
+        }
+      }
+    }
+
+    // Headline fallback: only if Experience section didn't provide data
     if (!jobTitle || !companyName) {
       const headline = document.querySelector(".text-body-medium.break-words");
       if (headline) {
@@ -425,35 +447,7 @@
           if (!jobTitle) jobTitle = atMatch[1].trim();
           if (!companyName) companyName = atMatch[2].trim();
         } else if (!jobTitle) {
-          // Headline might be just a title like "Marketing Lead" without "at Company"
           jobTitle = text;
-        }
-      }
-    }
-
-    // Experience section: first entry is usually the current role
-    if (!jobTitle || !companyName) {
-      const expSection = document.querySelector("#experience");
-      if (expSection) {
-        const expList = expSection.closest("section");
-        if (expList) {
-          // Look for visually-hidden spans with role/company text
-          const spans = expList.querySelectorAll(".visually-hidden, .t-bold span, .t-14.t-normal span, .pvs-entity__caption-wrapper");
-          const texts = Array.from(spans).map(s => s.textContent.trim()).filter(Boolean);
-          // Also grab all text from the first list item
-          const firstItem = expList.querySelector("li");
-          if (firstItem) {
-            const itemSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
-            const itemTexts = Array.from(itemSpans).map(s => s.textContent.trim()).filter(Boolean);
-            // Typically: [title, company, date range, ...]
-            if (itemTexts.length >= 2) {
-              if (!jobTitle) jobTitle = itemTexts[0];
-              if (!companyName) {
-                // Company text may include " · Full-time" suffix — strip it
-                companyName = itemTexts[1].split("·")[0].trim();
-              }
-            }
-          }
         }
       }
     }
