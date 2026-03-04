@@ -417,21 +417,37 @@
 
     // Experience section: ALWAYS read — this is the most accurate source for
     // current job title and company. Overrides headline/meta tag data.
+    // Handles two LinkedIn layouts:
+    //   Simple:  <li> Title | "Company · Full-time" | "Date range" </li>
+    //   Grouped: <li> Company | "Full-time · Duration" | <li> Title | "Date range" </li> </li>
     const expSection = document.querySelector("#experience");
     if (expSection) {
       const expList = expSection.closest("section");
       if (expList) {
         const firstItem = expList.querySelector("li");
         if (firstItem) {
-          const itemSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
-          const itemTexts = Array.from(itemSpans).map(s => s.textContent.trim()).filter(Boolean);
-          // Typical order: [title, "Company · Full-time", "date range", ...]
-          if (itemTexts.length >= 2) {
-            const expTitle = itemTexts[0];
-            const expCompany = itemTexts[1].split("·")[0].trim();
-            // Experience data overrides meta tag / headline data
-            if (expTitle) jobTitle = expTitle;
-            if (expCompany) companyName = expCompany;
+          const nestedLi = firstItem.querySelector("li");
+          if (nestedLi) {
+            // ── Grouped layout: company is parent, title is in nested li ──
+            // Parent spans: ["Metro Singapore", "Full-time · 1 yr 2 mos", "On-site"]
+            // Nested spans: ["Head of Loyalty...", "May 2025 - Present · 11 mos"]
+            const parentSpans = firstItem.querySelectorAll(":scope > div span[aria-hidden='true']");
+            const parentTexts = Array.from(parentSpans).map(s => s.textContent.trim()).filter(Boolean);
+            const nestedSpans = nestedLi.querySelectorAll("span[aria-hidden='true']");
+            const nestedTexts = Array.from(nestedSpans).map(s => s.textContent.trim()).filter(Boolean);
+            if (parentTexts.length >= 1) companyName = parentTexts[0];
+            if (nestedTexts.length >= 1) jobTitle = nestedTexts[0];
+          } else {
+            // ── Simple layout: title first, then company ──
+            const itemSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
+            const itemTexts = Array.from(itemSpans).map(s => s.textContent.trim()).filter(Boolean);
+            // Typical order: [title, "Company · Full-time", "date range", ...]
+            if (itemTexts.length >= 2) {
+              const expTitle = itemTexts[0];
+              const expCompany = itemTexts[1].split("·")[0].trim();
+              if (expTitle) jobTitle = expTitle;
+              if (expCompany) companyName = expCompany;
+            }
           }
         }
       }
