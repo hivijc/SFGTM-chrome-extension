@@ -417,52 +417,85 @@
 
     // Experience section: ALWAYS read — this is the most accurate source for
     // current job title and company. Overrides headline/meta tag data.
-    // Handles two LinkedIn layouts:
-    //   Simple:  <li> Title | "Company · Full-time" | "Date range" </li>
-    //   Grouped: <li> Company | "Full-time · Duration" | <li> Title | "Date range" </li> </li>
-    const expSection = document.querySelector("#experience");
-    console.log("[Nat-vigator] #experience found:", !!expSection);
-    if (expSection) {
-      const expList = expSection.closest("section");
-      console.log("[Nat-vigator] closest section found:", !!expList);
-      if (expList) {
-        const firstItem = expList.querySelector("li");
-        console.log("[Nat-vigator] first li found:", !!firstItem);
-        if (firstItem) {
-          // Debug: dump all spans to see what LinkedIn gives us
-          const debugSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
-          console.log("[Nat-vigator] all spans in first li:", Array.from(debugSpans).map(s => s.textContent.trim()));
-          const nestedLi = firstItem.querySelector("li");
-          console.log("[Nat-vigator] nested li (grouped layout):", !!nestedLi);
-          if (nestedLi) {
-            // ── Grouped layout: company is parent, title is in nested li ──
-            // Use set subtraction: all spans minus nested spans = parent-only spans
-            const allSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
-            const nestedSpans = new Set(nestedLi.querySelectorAll("span[aria-hidden='true']"));
-            const parentTexts = Array.from(allSpans)
-              .filter(s => !nestedSpans.has(s))
-              .map(s => s.textContent.trim())
-              .filter(Boolean);
-            const nestedTexts = Array.from(nestedSpans)
-              .map(s => s.textContent.trim())
-              .filter(Boolean);
-            // Parent: ["Metro Singapore", "Full-time · 1 yr 2 mos", ...]
-            // Nested: ["Head of Loyalty...", "May 2025 - Present · 11 mos", ...]
-            if (parentTexts.length >= 1) companyName = parentTexts[0];
-            if (nestedTexts.length >= 1) jobTitle = nestedTexts[0];
+    // Uses multiple strategies to find the experience section since LinkedIn
+    // changes their DOM frequently.
+    let expContainer = null;
+
+    // Strategy 1: #experience anchor → closest section
+    const expAnchor = document.querySelector("#experience");
+    if (expAnchor) expContainer = expAnchor.closest("section");
+
+    // Strategy 2: find section by heading text "Experience"
+    if (!expContainer) {
+      document.querySelectorAll("section").forEach(sec => {
+        if (expContainer) return;
+        const heading = sec.querySelector("h2, [class*='title']");
+        if (heading && /^\s*Experience\s*$/i.test(heading.textContent)) {
+          expContainer = sec;
+        }
+      });
+    }
+
+    // Strategy 3: look for section with id containing "experience"
+    if (!expContainer) {
+      const byId = document.querySelector("[id*='experience' i]");
+      if (byId) expContainer = byId.closest("section") || byId;
+    }
+
+    if (expContainer) {
+      // Get ALL span[aria-hidden='true'] in the experience section
+      // These contain the visible text LinkedIn renders
+      const allExpSpans = expContainer.querySelectorAll("span[aria-hidden='true']");
+      const allTexts = Array.from(allExpSpans).map(s => s.textContent.trim()).filter(Boolean);
+      console.log("[Nat-vigator] Experience spans:", allTexts.slice(0, 12));
+
+      // Date pattern to identify date entries (e.g., "May 2025 - Present · 11 mos")
+      const isDate = (t) => /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)\b/i.test(t);
+      // Employment type pattern (e.g., "Full-time · 1 yr 2 mos")
+      const isEmploymentMeta = (t) => /\b(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid)\b/i.test(t);
+      // Location pattern
+      const isLocation = (t) => /\b(singapore|london|new york|remote|on-site|hybrid|greater|area|region)\b/i.test(t) && t.length < 60;
+
+      // Filter to meaningful entries: not dates, not employment meta, not locations
+      const meaningful = allTexts.filter(t =>
+        !isDate(t) && !isEmploymentMeta(t) && !isLocation(t) && t.length > 1 && t.length < 120
+      );
+      console.log("[Nat-vigator] Meaningful texts:", meaningful.slice(0, 6));
+
+      // The first meaningful text is typically either:
+      // - Company name (grouped layout) or Job title (simple layout)
+      // Use role keywords to distinguish
+      if (meaningful.length >= 2) {
+        const rolePat = /\b(CEO|CTO|CFO|COO|CMO|CPO|CRO|VP|SVP|EVP|AVP|Director|Manager|Head|Lead|Founder|Co-founder|Chief|President|Officer|Engineer|Developer|Designer|Analyst|Consultant|Advisor|Specialist|Coordinator|Executive|Associate|Partner|Principal|Architect|Strategist|Product\s+Manager|Account\s+Manager|Project\s+Manager)\b/i;
+
+        const first = meaningful[0];
+        const second = meaningful[1];
+
+        if (rolePat.test(first)) {
+          // First is a role → simple layout: Title, Company
+          jobTitle = first;
+          companyName = second.split("·")[0].trim();
+        } else if (rolePat.test(second)) {
+          // Second is a role → grouped layout: Company, then Title
+          companyName = first;
+          jobTitle = second;
+        } else {
+          // Can't tell — assume first is company (grouped is more common for multi-role)
+          // Check if either appears in meta tags as company to disambiguate
+          const metaCompany = companyName; // what we found from meta tags earlier
+          if (metaCompany && first.toLowerCase().includes(metaCompany.toLowerCase())) {
+            companyName = first;
+            jobTitle = second;
+          } else if (metaCompany && second.toLowerCase().includes(metaCompany.toLowerCase())) {
+            companyName = second;
+            jobTitle = first;
           } else {
-            // ── Simple layout: title first, then company ──
-            const itemSpans = firstItem.querySelectorAll("span[aria-hidden='true']");
-            const itemTexts = Array.from(itemSpans).map(s => s.textContent.trim()).filter(Boolean);
-            // Typical order: [title, "Company · Full-time", "date range", ...]
-            if (itemTexts.length >= 2) {
-              const expTitle = itemTexts[0];
-              const expCompany = itemTexts[1].split("·")[0].trim();
-              if (expTitle) jobTitle = expTitle;
-              if (expCompany) companyName = expCompany;
-            }
+            // Default: first = title, second = company (simple layout is more common overall)
+            jobTitle = first;
+            companyName = second.split("·")[0].trim();
           }
         }
+        console.log("[Nat-vigator] Extracted:", { jobTitle, companyName });
       }
     }
 
