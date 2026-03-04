@@ -456,9 +456,12 @@
       // Location pattern
       const isLocation = (t) => /\b(singapore|london|new york|remote|on-site|hybrid|greater|area|region)\b/i.test(t) && t.length < 60;
 
-      // Filter to meaningful entries: not dates, not employment meta, not locations
+      // Section headings that appear as spans inside the experience section
+      const sectionHeadings = /^(experience|education|skills|licenses|certifications|volunteering|publications|projects|honors|awards|languages|interests|recommendations|courses|organizations|about|activity|show all)$/i;
+
+      // Filter to meaningful entries: not dates, not employment meta, not locations, not headings
       const meaningful = allTexts.filter(t =>
-        !isDate(t) && !isEmploymentMeta(t) && !isLocation(t) && t.length > 1 && t.length < 120
+        !isDate(t) && !isEmploymentMeta(t) && !isLocation(t) && !sectionHeadings.test(t.trim()) && t.length > 1 && t.length < 120
       );
       console.log("[Nat-vigator] Meaningful texts:", meaningful.slice(0, 6));
 
