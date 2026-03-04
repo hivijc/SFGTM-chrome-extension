@@ -555,12 +555,45 @@
     return null;
   }
 
+  // ── Delayed re-extraction for lazy-loaded Experience section ──
+  // LinkedIn lazy-loads the Experience section as the user scrolls.
+  // We watch for it to appear and update the sidebar with better data.
+  let expObserver = null;
+  function watchForExperience(profile) {
+    if (expObserver) { expObserver.disconnect(); expObserver = null; }
+    if (!profile || profile.type !== "person") return;
+
+    // If experience section already found data, no need to watch
+    const expSection = document.querySelector("#experience");
+    if (expSection) return;
+
+    // Watch the DOM for #experience to appear
+    expObserver = new MutationObserver(() => {
+      const exp = document.querySelector("#experience");
+      if (exp) {
+        console.log("[Nat-vigator] Experience section appeared, re-extracting...");
+        expObserver.disconnect();
+        expObserver = null;
+        const updated = extractPersonData();
+        if (updated.jobTitle && updated.jobTitle !== profile.jobTitle) {
+          currentProfile = updated;
+          showProfilePreview(updated);
+          console.log("[Nat-vigator] Updated sidebar:", { jobTitle: updated.jobTitle, companyName: updated.companyName });
+        }
+      }
+    });
+    expObserver.observe(document.body, { childList: true, subtree: true });
+    // Stop watching after 15s to avoid leaks
+    setTimeout(() => { if (expObserver) { expObserver.disconnect(); expObserver = null; } }, 15000);
+  }
+
   // ── SPA navigation detection ──
   async function onPageChange() {
     stopBriefPolling();
     const profile = extractProfile();
     currentProfile = profile;
     currentContactId = null;
+    watchForExperience(profile);
 
     if (!profile) {
       showScreen("no-profile");
