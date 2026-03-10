@@ -385,7 +385,11 @@
         firstName = nameParts[0] || "";
         lastName = nameParts.slice(1).join(" ") || "";
       }
-      if (titleParts.length >= 2) {
+      if (titleParts.length >= 3) {
+        // "Name - Title - Company | LinkedIn" — 3-part format
+        jobTitle = titleParts[1].trim();
+        companyName = titleParts.slice(2).join(" - ").replace(/\s*\|.*$/, "").trim();
+      } else if (titleParts.length >= 2) {
         const roleCompany = titleParts[1].replace(/\s*\|.*$/, "").trim();
         const atParts = roleCompany.split(" at ");
         if (atParts.length >= 2) {
@@ -459,22 +463,49 @@
       // Get ALL span[aria-hidden='true'] in the experience section
       // These contain the visible text LinkedIn renders
       const allExpSpans = expContainer.querySelectorAll("span[aria-hidden='true']");
-      const allTexts = Array.from(allExpSpans).map(s => s.textContent.trim()).filter(Boolean);
-      console.log("[Nat-vigator] Experience spans:", allTexts.slice(0, 12));
+      const rawTexts = Array.from(allExpSpans).map(s => s.textContent.trim()).filter(Boolean);
+      console.log("[Nat-vigator] Experience spans:", rawTexts.slice(0, 12));
 
-      // Date pattern to identify date entries (e.g., "May 2025 - Present · 11 mos")
+      // Pre-process: split spans containing "·" so "Sime Motors · Full-time"
+      // becomes ["Sime Motors", "Full-time"] — prevents company names from being
+      // filtered out just because they share a span with employment metadata.
+      const allTexts = [];
+      for (const t of rawTexts) {
+        if (t.includes("·")) {
+          for (const part of t.split("·")) {
+            const trimmed = part.trim();
+            if (trimmed) allTexts.push(trimmed);
+          }
+        } else {
+          allTexts.push(t);
+        }
+      }
+
+      // Date pattern to identify date entries (e.g., "May 2025 - Present", "2024")
       const isDate = (t) => /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)\b/i.test(t);
-      // Employment type pattern (e.g., "Full-time · 1 yr 2 mos")
-      const isEmploymentMeta = (t) => /\b(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid)\b/i.test(t);
-      // Location pattern
-      const isLocation = (t) => /\b(singapore|london|new york|remote|on-site|hybrid|greater|area|region)\b/i.test(t) && t.length < 60;
+      // Duration pattern (e.g., "1 yr 8 mos", "2 yrs", "11 mos")
+      const isDuration = (t) => /^\d+\s*(yr|yrs|mo|mos|year|years|month|months)\b/i.test(t);
+      // Employment type pattern (e.g., "Full-time", "Permanent")
+      const isEmploymentMeta = (t) => /\b(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid|permanent|temporary|seasonal|apprenticeship)\b/i.test(t);
+      // Location pattern — only treat as location if the text is PRIMARILY location words.
+      // "Singapore" → location. "COURTS SINGAPORE" → company name (not a location).
+      const locationPat = /\b(singapore|london|new york|remote|on-site|hybrid|greater|area|region|malaysia|indonesia|thailand|vietnam|philippines|india|hong kong|taiwan|japan|korea|china|australia|united kingdom|united states)\b/gi;
+      const isLocation = (t) => {
+        if (t.length >= 60) return false;
+        if (!locationPat.test(t)) return false;
+        locationPat.lastIndex = 0; // reset regex state
+        // Strip location words — if significant text remains, it's a company name, not a location
+        const stripped = t.replace(locationPat, "").replace(/[,.\s-]+/g, " ").trim();
+        locationPat.lastIndex = 0;
+        return stripped.length <= 2;
+      };
 
       // Section headings that appear as spans inside the experience section
       const sectionHeadings = /^(experience|education|skills|licenses|certifications|volunteering|publications|projects|honors|awards|languages|interests|recommendations|courses|organizations|about|activity|show all)$/i;
 
-      // Filter to meaningful entries: not dates, not employment meta, not locations, not headings
+      // Filter to meaningful entries: not dates, not durations, not employment meta, not locations, not headings
       const meaningful = allTexts.filter(t =>
-        !isDate(t) && !isEmploymentMeta(t) && !isLocation(t) && !sectionHeadings.test(t.trim()) && t.length > 1 && t.length < 120
+        !isDate(t) && !isDuration(t) && !isEmploymentMeta(t) && !isLocation(t) && !sectionHeadings.test(t.trim()) && t.length > 1 && t.length < 120
       );
       console.log("[Nat-vigator] Meaningful texts:", meaningful.slice(0, 6));
 
