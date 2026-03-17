@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nat-vigator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Research LinkedIn prospects with Nat-vigator by SleekFlow",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": [
