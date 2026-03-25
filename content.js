@@ -30,6 +30,7 @@
   let isDragging = false;
 
   const API_BASE = "https://sfgtm.vercel.app";
+  const EXT_VERSION = chrome.runtime.getManifest().version;
 
   /** Proxy fetch through background worker (content scripts can't cross-origin fetch) */
   function api(method, path, body) {
@@ -78,6 +79,9 @@
           <button id="nv-switch-user" title="Switch user">&#8644;</button>
           <button id="nv-close" title="Collapse">&times;</button>
         </div>
+      </div>
+      <div id="nv-update-banner" class="nv-hidden" style="background:#fef3c7;color:#92400e;padding:8px 12px;font-size:12px;font-weight:600;text-align:center;border-bottom:1px solid #fcd34d;">
+        &#9888; Update required! Ask Nathaniel for the latest Nat-vigator extension.
       </div>
       <div id="nv-body">
         <!-- Setup -->
@@ -372,12 +376,32 @@
     }
   }
 
+  // ── Version check — show update banner if outdated ──
+  async function checkForUpdate() {
+    try {
+      const res = await api("GET", "/api/extension-version");
+      if (res.ok && res.data?.version) {
+        const latest = res.data.version;
+        if (latest !== EXT_VERSION) {
+          const banner = $("#nv-update-banner");
+          if (banner) banner.classList.remove("nv-hidden");
+          console.log(`[Nat-vigator] Update available: ${EXT_VERSION} → ${latest}`);
+        }
+      }
+    } catch {
+      // Version check failed — ignore
+    }
+  }
+  checkForUpdate();
+
   // ── Data extraction ──
   function extractPersonData() {
     const url = normalizeUrl(window.location.href);
     let firstName = "", lastName = "", jobTitle = "", companyName = "";
 
-    const ogTitle = getMeta("og:title");
+    // ── Strategy 1: og:title meta tag (works on older LinkedIn layouts) ──
+    const ogTitleRaw = getMeta("og:title");
+    const ogTitle = ogTitleRaw ? ogTitleRaw.replace(/\s*\|\s*LinkedIn\s*$/i, "").trim() : "";
     if (ogTitle) {
       const titleParts = ogTitle.split(" - ");
       if (titleParts.length >= 1) {
@@ -386,7 +410,6 @@
         lastName = nameParts.slice(1).join(" ") || "";
       }
       if (titleParts.length >= 3) {
-        // "Name - Title - Company | LinkedIn" — 3-part format
         jobTitle = titleParts[1].trim();
         companyName = titleParts.slice(2).join(" - ").replace(/\s*\|.*$/, "").trim();
       } else if (titleParts.length >= 2) {
@@ -396,8 +419,6 @@
           jobTitle = atParts[0].trim();
           companyName = atParts[1].trim();
         } else {
-          // LinkedIn format without "at" is typically "Name - Company | LinkedIn"
-          // Only treat as jobTitle if it looks like a role (contains role keywords)
           const rolePat = /\b(CEO|CTO|CFO|COO|CMO|VP|SVP|EVP|Director|Manager|Head|Lead|Founder|Co-founder|Chief|President|Officer|Engineer|Developer|Designer|Analyst|Consultant|Advisor|Specialist|Coordinator|Executive|Associate|Partner|Principal|Architect|Strategist)\b/i;
           if (rolePat.test(roleCompany)) jobTitle = roleCompany;
           else companyName = roleCompany;
@@ -405,16 +426,15 @@
       }
     }
 
+    // ── Strategy 2: og:description ──
     if (!jobTitle || !companyName) {
       const ogDesc = getMeta("og:description");
       if (ogDesc) {
-        // Pattern 1: "Title at Company. Description..."
         const m = ogDesc.match(/^(.+?)\s+at\s+([^.·|]+)/i);
         if (m) {
           if (!jobTitle) jobTitle = m[1].trim();
           if (!companyName) companyName = m[2].trim();
         }
-        // Pattern 2: "... · Experience: Company Name · ..."
         if (!companyName) {
           const expMatch = ogDesc.match(/Experience:\s*([^·|]+)/i);
           if (expMatch) companyName = expMatch[1].trim();
@@ -422,7 +442,9 @@
       }
     }
 
-    // ── DOM-based extraction (most reliable when logged in) ──
+    // ── Strategy 3: DOM-based extraction ──
+    // LinkedIn 2025+ uses obfuscated classes and no h1/og:title. We search
+    // for content by tag and text patterns instead of class selectors.
     if (!firstName) {
       const h1 = document.querySelector("h1");
       if (h1) {
@@ -432,121 +454,79 @@
       }
     }
 
-    // Experience section: ALWAYS read — this is the most accurate source for
-    // current job title and company. Overrides headline/meta tag data.
-    // Uses multiple strategies to find the experience section since LinkedIn
-    // changes their DOM frequently.
-    let expContainer = null;
-
-    // Strategy 1: #experience anchor → closest section
-    const expAnchor = document.querySelector("#experience");
-    if (expAnchor) expContainer = expAnchor.closest("section");
-
-    // Strategy 2: find section by heading text "Experience"
-    if (!expContainer) {
-      document.querySelectorAll("section").forEach(sec => {
-        if (expContainer) return;
-        const heading = sec.querySelector("h2, [class*='title']");
-        if (heading && /^\s*Experience\s*$/i.test(heading.textContent)) {
-          expContainer = sec;
-        }
-      });
-    }
-
-    // Strategy 3: look for section with id containing "experience"
-    if (!expContainer) {
-      const byId = document.querySelector("[id*='experience' i]");
-      if (byId) expContainer = byId.closest("section") || byId;
-    }
-
-    if (expContainer) {
-      // Get ALL span[aria-hidden='true'] in the experience section
-      // These contain the visible text LinkedIn renders
-      const allExpSpans = expContainer.querySelectorAll("span[aria-hidden='true']");
-      const rawTexts = Array.from(allExpSpans).map(s => s.textContent.trim()).filter(Boolean);
-      console.log("[Nat-vigator] Experience spans:", rawTexts.slice(0, 12));
-
-      // Pre-process: split spans containing "·" so "Sime Motors · Full-time"
-      // becomes ["Sime Motors", "Full-time"] — prevents company names from being
-      // filtered out just because they share a span with employment metadata.
-      const allTexts = [];
-      for (const t of rawTexts) {
-        if (t.includes("·")) {
-          for (const part of t.split("·")) {
-            const trimmed = part.trim();
-            if (trimmed) allTexts.push(trimmed);
-          }
-        } else {
-          allTexts.push(t);
-        }
-      }
-
-      // Date pattern to identify date entries (e.g., "May 2025 - Present", "2024")
-      const isDate = (t) => /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)\b/i.test(t);
-      // Duration pattern (e.g., "1 yr 8 mos", "2 yrs", "11 mos")
-      const isDuration = (t) => /^\d+\s*(yr|yrs|mo|mos|year|years|month|months)\b/i.test(t);
-      // Employment type pattern (e.g., "Full-time", "Permanent")
-      const isEmploymentMeta = (t) => /\b(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid|permanent|temporary|seasonal|apprenticeship)\b/i.test(t);
-      // Location pattern — only treat as location if the text is PRIMARILY location words.
-      // "Singapore" → location. "COURTS SINGAPORE" → company name (not a location).
-      const locationPat = /\b(singapore|london|new york|remote|on-site|hybrid|greater|area|region|malaysia|indonesia|thailand|vietnam|philippines|india|hong kong|taiwan|japan|korea|china|australia|united kingdom|united states)\b/gi;
-      const isLocation = (t) => {
-        if (t.length >= 60) return false;
-        if (!locationPat.test(t)) return false;
-        locationPat.lastIndex = 0; // reset regex state
-        // Strip location words — if significant text remains, it's a company name, not a location
-        const stripped = t.replace(locationPat, "").replace(/[,.\s-]+/g, " ").trim();
-        locationPat.lastIndex = 0;
-        return stripped.length <= 2;
-      };
-
-      // Section headings that appear as spans inside the experience section
-      const sectionHeadings = /^(experience|education|skills|licenses|certifications|volunteering|publications|projects|honors|awards|languages|interests|recommendations|courses|organizations|about|activity|show all)$/i;
-
-      // Filter to meaningful entries: not dates, not durations, not employment meta, not locations, not headings
-      const meaningful = allTexts.filter(t =>
-        !isDate(t) && !isDuration(t) && !isEmploymentMeta(t) && !isLocation(t) && !sectionHeadings.test(t.trim()) && t.length > 1 && t.length < 120
-      );
-      console.log("[Nat-vigator] Meaningful texts:", meaningful.slice(0, 6));
-
-      // The first meaningful text is typically either:
-      // - Company name (grouped layout) or Job title (simple layout)
-      // Use role keywords to distinguish
-      if (meaningful.length >= 2) {
-        const rolePat = /\b(CEO|CTO|CFO|COO|CMO|CPO|CRO|VP|SVP|EVP|AVP|Director|Manager|Head|Lead|Founder|Co-founder|Chief|President|Officer|Engineer|Developer|Designer|Analyst|Consultant|Advisor|Specialist|Coordinator|Executive|Associate|Partner|Principal|Architect|Strategist|Product\s+Manager|Account\s+Manager|Project\s+Manager)\b/i;
-
-        const first = meaningful[0];
-        const second = meaningful[1];
-
-        if (rolePat.test(first)) {
-          // First is a role → simple layout: Title, Company
-          jobTitle = first;
-          companyName = second.split("·")[0].trim();
-        } else if (rolePat.test(second)) {
-          // Second is a role → grouped layout: Company, then Title
-          companyName = first;
-          jobTitle = second;
-        } else {
-          // Can't tell — assume first is company (grouped is more common for multi-role)
-          // Check if either appears in meta tags as company to disambiguate
-          const metaCompany = companyName; // what we found from meta tags earlier
-          if (metaCompany && first.toLowerCase().includes(metaCompany.toLowerCase())) {
-            companyName = first;
-            jobTitle = second;
-          } else if (metaCompany && second.toLowerCase().includes(metaCompany.toLowerCase())) {
-            companyName = second;
-            jobTitle = first;
-          } else {
-            // Default: first = title, second = company (simple layout is more common overall)
-            jobTitle = first;
-            companyName = second.split("·")[0].trim();
-          }
-        }
-        console.log("[Nat-vigator] Extracted:", { jobTitle, companyName });
+    // Name from h2 or document.title (LinkedIn 2025+ puts name in h2)
+    if (!firstName) {
+      const docName = (document.title || "").replace(/\s*\|.*$/, "").replace(/\s*[-–—].*$/, "").trim();
+      if (docName) {
+        const parts = docName.split(" ");
+        firstName = parts[0] || "";
+        lastName = parts.slice(1).join(" ") || "";
       }
     }
 
-    // Headline fallback: only if Experience section didn't provide data
+    // ── Strategy 4: innerText Experience section (most accurate, LinkedIn 2025+) ──
+    // LinkedIn's new DOM uses obfuscated classes and no #experience anchors.
+    // Parsing innerText is the most reliable way to extract from Experience.
+    // Format: "Experience\n\nJob Title\n\nCompany · Type\n\nDate range\n..."
+    {
+      const bodyText = document.body.innerText;
+      const expIdx = bodyText.indexOf("Experience\n");
+      if (expIdx >= 0) {
+        const afterExp = bodyText.slice(expIdx + "Experience\n".length, expIdx + 500);
+        const lines = afterExp.split("\n").map(l => l.trim()).filter(Boolean);
+        console.log("[Nat-vigator] Experience innerText lines:", lines.slice(0, 6));
+
+        // Filter out noise lines
+        const isDate = (t) => /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)\b/i.test(t);
+        const isDuration = (t) => /\d+\s*(yr|yrs|mo|mos|year|years|month|months)\b/i.test(t);
+        const isEmploymentMeta = (t) => /^(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid|permanent|temporary|seasonal|apprenticeship)$/i.test(t);
+        const isLocation = (t) => /\b(on-site|remote|hybrid)\b/i.test(t) && t.length < 60;
+        const isBullet = (t) => t.startsWith("•") || t.startsWith("-") || t.startsWith("·");
+
+        const meaningful = [];
+        for (const line of lines) {
+          if (meaningful.length >= 2) break;
+          if (isDate(line) || isDuration(line) || isEmploymentMeta(line) || isLocation(line) || isBullet(line)) continue;
+          if (line.length < 2 || line.length > 120) continue;
+          // Split "Company · Full-time" into just the company part
+          const parts = line.split("·").map(p => p.trim());
+          const mainPart = parts[0];
+          if (mainPart && !isEmploymentMeta(mainPart) && mainPart.length > 1) {
+            meaningful.push(mainPart);
+          }
+        }
+
+        if (meaningful.length >= 2) {
+          // First meaningful line = job title, second = company
+          jobTitle = meaningful[0];
+          companyName = meaningful[1];
+          console.log("[Nat-vigator] Extracted from experience innerText:", { jobTitle, companyName });
+        }
+      }
+    }
+
+    // ── Strategy 5: Headline from <p> tags (LinkedIn 2025+ fallback) ──
+    // Only used if Experience section didn't provide data
+    if (!jobTitle || !companyName) {
+      const candidates = document.querySelectorAll("p");
+      for (const p of candidates) {
+        const text = p.textContent.trim();
+        if (text.length < 5 || text.length > 120) continue;
+        const atMatch = text.match(/^(.+?)\s+at\s+(.+)$/i);
+        if (atMatch) {
+          const candidateTitle = atMatch[1].trim();
+          const candidateCompany = atMatch[2].trim();
+          if (candidateCompany.length < 80 && !candidateCompany.includes(".")) {
+            if (!jobTitle) jobTitle = candidateTitle;
+            if (!companyName) companyName = candidateCompany;
+            console.log("[Nat-vigator] Headline from <p>:", { jobTitle, companyName });
+            break;
+          }
+        }
+      }
+    }
+
+    // ── Strategy 6: Classic headline selector fallback ──
     if (!jobTitle || !companyName) {
       const headline = document.querySelector(".text-body-medium.break-words");
       if (headline) {
@@ -561,11 +541,12 @@
       }
     }
 
+    // ── Strategy 7: document.title fallback ──
     if (!firstName || !companyName) {
       const t = document.title || "";
-      const parts = t.split(" - ");
+      const parts = t.split(/\s+[-–—]\s+/);
       if (!firstName && parts.length >= 1) {
-        const np = parts[0].trim().split(" ");
+        const np = parts[0].replace(/\s*\|.*$/, "").trim().split(" ");
         firstName = np[0] || "";
         lastName = np.slice(1).join(" ") || "";
       }
@@ -575,6 +556,7 @@
       }
     }
 
+    console.log("[Nat-vigator] Final extraction:", { firstName, lastName, jobTitle, companyName });
     return { type: "person", url, firstName, lastName, jobTitle, companyName };
   }
 
@@ -624,15 +606,18 @@
       return false;
     }
 
-    // If experience section is already in DOM, extract immediately
-    if (document.querySelector("#experience")) {
+    // Check if Experience section is already in innerText or DOM
+    const hasExperience = () =>
+      document.querySelector("#experience") || document.body.innerText.includes("Experience\n");
+
+    if (hasExperience()) {
       tryReExtract();
       return;
     }
 
-    // Strategy 1: MutationObserver — fires as soon as #experience appears
+    // Strategy 1: MutationObserver — fires when DOM changes, check for Experience
     expObserver = new MutationObserver(() => {
-      if (document.querySelector("#experience")) {
+      if (hasExperience()) {
         expObserver.disconnect();
         expObserver = null;
         if (expRetryTimer) { clearTimeout(expRetryTimer); expRetryTimer = null; }
@@ -647,7 +632,7 @@
     function scheduleRetry() {
       if (retryIndex >= retryDelays.length) return;
       expRetryTimer = setTimeout(() => {
-        if (document.querySelector("#experience")) {
+        if (hasExperience()) {
           if (expObserver) { expObserver.disconnect(); expObserver = null; }
           tryReExtract();
         } else {
