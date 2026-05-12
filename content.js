@@ -80,8 +80,23 @@
           <button id="nv-close" title="Collapse">&times;</button>
         </div>
       </div>
-      <div id="nv-update-banner" class="nv-hidden" style="background:#fef3c7;color:#92400e;padding:8px 12px;font-size:12px;font-weight:600;text-align:center;border-bottom:1px solid #fcd34d;">
-        &#9888; Update required! Ask Nathaniel for the latest Nat-vigator extension.
+      <div id="nv-update-banner" class="nv-hidden">
+        <div class="nv-update-inner">
+          <div class="nv-update-icon">&#9888;</div>
+          <div class="nv-update-text">
+            <div class="nv-update-title">Update Available</div>
+            <div class="nv-update-sub" id="nv-update-sub">A new version of Nat-vigator is ready.</div>
+          </div>
+        </div>
+        <a id="nv-update-link" href="https://github.com/hivijc/SFGTM-chrome-extension/releases/latest" target="_blank" class="nv-update-btn">
+          Download latest &#8599;
+        </a>
+        <button id="nv-update-dismiss" class="nv-update-dismiss" title="Dismiss">&#10005;</button>
+      </div>
+      <div id="nv-conflict-banner" class="nv-hidden" style="background:#fff7ed;color:#9a3412;padding:10px 12px;font-size:11px;border-bottom:2px solid #fdba74;">
+        <div style="font-weight:700;margin-bottom:2px;">&#9888; RoE Conflict</div>
+        <div id="nv-conflict-msg" style="font-weight:400;line-height:1.4;"></div>
+        <a id="nv-conflict-link" href="#" target="_blank" style="display:inline-block;margin-top:4px;font-size:11px;font-weight:600;color:#9a3412;text-decoration:underline;">View account →</a>
       </div>
       <div id="nv-body">
         <!-- Setup -->
@@ -92,6 +107,11 @@
         <!-- No profile -->
         <div id="nv-no-profile" class="nv-screen nv-hidden">
           <p class="nv-msg nv-muted">Navigate to a LinkedIn profile to get started.</p>
+        </div>
+        <!-- Detecting -->
+        <div id="nv-detecting" class="nv-screen nv-hidden">
+          <div class="nv-spinner"></div>
+          <p class="nv-msg" style="margin-top:14px;">Waiting for profile to load...</p>
         </div>
         <!-- Preview -->
         <div id="nv-preview" class="nv-screen nv-hidden">
@@ -384,7 +404,11 @@
         const latest = res.data.version;
         if (latest !== EXT_VERSION) {
           const banner = $("#nv-update-banner");
+          const sub = $("#nv-update-sub");
+          if (sub) sub.textContent = `You have v${EXT_VERSION} — v${latest} is out.`;
           if (banner) banner.classList.remove("nv-hidden");
+          const dismiss = $("#nv-update-dismiss");
+          if (dismiss) dismiss.addEventListener("click", () => banner.classList.add("nv-hidden"));
           console.log(`[Nat-vigator] Update available: ${EXT_VERSION} → ${latest}`);
         }
       }
@@ -423,6 +447,13 @@
           if (rolePat.test(roleCompany)) jobTitle = roleCompany;
           else companyName = roleCompany;
         }
+      }
+      // Invalidate if og:title was education data (LinkedIn uses degree info for some profiles)
+      const isDegreeTerm = (t) => /\b(bachelor|master|doctor|phd|mba|bsc|msc|b\.s\.|m\.s\.|llb|jd|md|b\.eng|m\.eng|associate\s+of|diploma)\b/i.test(t);
+      if (isDegreeTerm(jobTitle) || isDegreeTerm(companyName)) {
+        jobTitle = "";
+        companyName = "";
+        console.log("[Nat-vigator] og:title contained education data — cleared");
       }
     }
 
@@ -467,40 +498,77 @@
     // ── Strategy 4: innerText Experience section (most accurate, LinkedIn 2025+) ──
     // LinkedIn's new DOM uses obfuscated classes and no #experience anchors.
     // Parsing innerText is the most reliable way to extract from Experience.
-    // Format: "Experience\n\nJob Title\n\nCompany · Type\n\nDate range\n..."
+    // Handles both single-role and grouped (multi-role under one company) layouts.
     {
       const bodyText = document.body.innerText;
       const expIdx = bodyText.indexOf("Experience\n");
       if (expIdx >= 0) {
-        const afterExp = bodyText.slice(expIdx + "Experience\n".length, expIdx + 500);
-        const lines = afterExp.split("\n").map(l => l.trim()).filter(Boolean);
-        console.log("[Nat-vigator] Experience innerText lines:", lines.slice(0, 6));
+        // 2000-char window (500 was too small for profiles with long descriptions above first entry)
+        const afterExp = bodyText.slice(expIdx + "Experience\n".length, expIdx + 2000);
+        const rawLines = afterExp.split("\n").map(l => l.trim()).filter(Boolean);
+        console.log("[Nat-vigator] Experience innerText lines:", rawLines.slice(0, 10));
 
-        // Filter out noise lines
         const isDate = (t) => /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)\b/i.test(t);
         const isDuration = (t) => /\d+\s*(yr|yrs|mo|mos|year|years|month|months)\b/i.test(t);
-        const isEmploymentMeta = (t) => /^(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid|permanent|temporary|seasonal|apprenticeship)$/i.test(t);
+        const isEmploymentType = (t) => /^(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid|permanent|temporary|seasonal|apprenticeship)$/i.test(t);
         const isLocation = (t) => /\b(on-site|remote|hybrid)\b/i.test(t) && t.length < 60;
         const isBullet = (t) => t.startsWith("•") || t.startsWith("-") || t.startsWith("·");
+        const isUiNoise = (t) => /^\d+\s+position(s)?$/i.test(t) || /^show\s+all/i.test(t) || /^\d+\s+(role|job|experience)s?$/i.test(t);
 
-        const meaningful = [];
-        for (const line of lines) {
-          if (meaningful.length >= 2) break;
-          if (isDate(line) || isDuration(line) || isEmploymentMeta(line) || isLocation(line) || isBullet(line)) continue;
-          if (line.length < 2 || line.length > 120) continue;
-          // Split "Company · Full-time" into just the company part
-          const parts = line.split("·").map(p => p.trim());
-          const mainPart = parts[0];
-          if (mainPart && !isEmploymentMeta(mainPart) && mainPart.length > 1) {
-            meaningful.push(mainPart);
+        // Grouped layout: company name appears alone, employment type follows on the next few lines.
+        // e.g. "Lendela" then "Full-time · 5 yrs 9 mos"
+        const isGroupedCompanyHeader = (idx) => {
+          for (let j = idx + 1; j < Math.min(idx + 5, rawLines.length); j++) {
+            const nl = rawLines[j].trim();
+            if (/^(full-time|part-time|contract|freelance|internship|self-employed)\b/i.test(nl)) return true;
+            if (nl.length > 2 && !isDate(nl) && !isDuration(nl) && !isEmploymentType(nl) && !isLocation(nl) && !isBullet(nl) && !isUiNoise(nl)) break;
+          }
+          return false;
+        };
+
+        // After a grouped company is found, skip city/country lines before the role title.
+        const isLikelyCity = (t) => {
+          if (t.split(" ").length > 3 || /\d/.test(t)) return false;
+          if (/\b(manager|director|vp|ceo|cto|cfo|head|lead|engineer|analyst|specialist|coordinator|executive|associate|partner|consultant|advisor|designer|developer|architect|strategist|officer|founder|president)\b/i.test(t)) return false;
+          return true;
+        };
+
+        let foundTitle = "";
+        let foundCompany = "";
+        let groupedMode = false;
+
+        for (let i = 0; i < rawLines.length; i++) {
+          if (foundTitle && foundCompany) break;
+
+          const line = rawLines[i];
+          if (isDate(line) || isDuration(line) || isEmploymentType(line) || isLocation(line) || isBullet(line) || isUiNoise(line)) continue;
+          if (line.length < 2 || line.length > 150) continue;
+
+          // Inline company: "Standard Chartered Bank · Full-time"
+          const isCompanyLine = /·\s*(full-time|part-time|contract|freelance|internship|self-employed)/i.test(line);
+          const mainPart = line.split("·")[0].trim();
+          if (!mainPart || mainPart.length < 2) continue;
+
+          if (isCompanyLine) {
+            if (!foundCompany) { foundCompany = mainPart; groupedMode = false; }
+          } else if (!foundCompany && isGroupedCompanyHeader(i)) {
+            // Grouped layout — company is on its own line
+            foundCompany = mainPart;
+            groupedMode = true;
+          } else {
+            // In grouped mode skip city/country lines before the title appears
+            if (groupedMode && !foundTitle && isLikelyCity(line)) continue;
+            if (!foundTitle) foundTitle = mainPart;
+            else if (!foundCompany) foundCompany = mainPart;
           }
         }
 
-        if (meaningful.length >= 2) {
-          // First meaningful line = job title, second = company
-          jobTitle = meaningful[0];
-          companyName = meaningful[1];
+        if (foundTitle && foundCompany) {
+          jobTitle = foundTitle;
+          companyName = foundCompany;
           console.log("[Nat-vigator] Extracted from experience innerText:", { jobTitle, companyName });
+        } else if (foundTitle && !foundCompany && !jobTitle) {
+          jobTitle = foundTitle;
         }
       }
     }
@@ -702,7 +770,10 @@
     const url = window.location.href;
     if (url !== lastUrl) {
       lastUrl = url;
-      setTimeout(onPageChange, 1500);
+      if (currentGpmName && /linkedin\.com\/(in|company)\//.test(url)) {
+        showScreen("detecting");
+      }
+      setTimeout(onPageChange, 5000);
     }
   }
 
@@ -824,7 +895,7 @@
     showScreen("loading");
     updateProgressBar("nv-loading-fill", "nv-loading-dots", "nv-loading-msg", null);
 
-    const body = { url: profile.url, folderId: currentFolderId || undefined };
+    const body = { url: profile.url, folderId: currentFolderId || undefined, gpmName: currentGpmName || undefined };
 
     if (profile.type === "person" && profile.firstName) {
       body.extractedData = {
@@ -854,6 +925,19 @@
       } else if (result.accountId) {
         viewUrl = `${API_BASE}/accounts/${result.accountId}`;
         currentContactId = null;
+      }
+
+      // RoE conflict warning — show if another GPM owns this account
+      const conflictBanner = $("#nv-conflict-banner");
+      if (result.ownerGpmName && result.ownerGpmName.toLowerCase() !== (currentGpmName || "").toLowerCase()) {
+        const stageLabel = result.pipelineStage
+          ? result.pipelineStage.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+          : "Pipeline";
+        $("#nv-conflict-msg").textContent = `${result.ownerGpmName} is working this account (${stageLabel}). Check RoE before proceeding.`;
+        $("#nv-conflict-link").href = viewUrl || `${API_BASE}/accounts/${result.accountId}`;
+        conflictBanner.classList.remove("nv-hidden");
+      } else {
+        conflictBanner.classList.add("nv-hidden");
       }
 
       showSuccess(result.existing, viewUrl, result.type);
@@ -1134,7 +1218,10 @@
     renderGpmPicker();
 
     lastUrl = window.location.href;
-    onPageChange();
+    if (/linkedin\.com\/(in|company)\//.test(window.location.href)) {
+      showScreen("detecting");
+    }
+    setTimeout(onPageChange, 5000);
   }
 
   init();
@@ -1436,6 +1523,91 @@
       @keyframes nv-pulse {
         0%, 100% { box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25); }
         50% { box-shadow: 0 0 0 5px rgba(124, 58, 237, 0.1); }
+      }
+
+      /* ── Update banner ── */
+      #nv-update-banner {
+        position: relative;
+        background: linear-gradient(135deg, #7c3aed 0%, #6d28d9 100%);
+        color: #fff;
+        padding: 10px 36px 10px 12px;
+        border-bottom: 1px solid #5b21b6;
+      }
+
+      .nv-update-inner {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .nv-update-icon {
+        font-size: 16px;
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+
+      .nv-update-title {
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.3;
+      }
+
+      .nv-update-sub {
+        font-size: 11px;
+        opacity: 0.85;
+        margin-top: 2px;
+        line-height: 1.3;
+      }
+
+      .nv-update-btn {
+        display: block;
+        width: 100%;
+        padding: 6px 10px;
+        background: #fff;
+        color: #7c3aed;
+        border: none;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 700;
+        text-align: center;
+        text-decoration: none;
+        cursor: pointer;
+        transition: opacity 0.15s;
+      }
+
+      .nv-update-btn:hover { opacity: 0.9; }
+
+      .nv-update-dismiss {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: none;
+        border: none;
+        color: rgba(255,255,255,0.7);
+        font-size: 13px;
+        cursor: pointer;
+        line-height: 1;
+        padding: 2px 4px;
+        border-radius: 4px;
+        transition: color 0.15s;
+      }
+
+      .nv-update-dismiss:hover { color: #fff; }
+
+      /* ── Detecting spinner ── */
+      .nv-spinner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid #e5e7eb;
+        border-top-color: #7c3aed;
+        border-radius: 50%;
+        animation: nv-spin 0.8s linear infinite;
+        margin: 24px auto 0;
+      }
+
+      @keyframes nv-spin {
+        to { transform: rotate(360deg); }
       }
 
       /* ── Intelligence section ── */
