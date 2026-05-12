@@ -159,6 +159,12 @@
                 <div id="nv-deals-summary" class="nv-deals-summary"></div>
                 <div id="nv-deals-list"></div>
               </div>
+              <!-- Recent Wins (30d) -->
+              <div id="nv-recent-wins" class="nv-hidden">
+                <div class="nv-section-label" style="margin-top:10px;">Recent Wins <span class="nv-rw-badge">30d</span></div>
+                <div id="nv-rw-list"></div>
+              </div>
+
               <!-- Outbound (collapsed) -->
               <div id="nv-outbound-section">
                 <button id="nv-outbound-toggle" class="nv-collapse-toggle">
@@ -1084,6 +1090,35 @@
         }
       }
 
+      // Recent Wins (30d)
+      const rwSection = $("#nv-recent-wins");
+      const rwList = $("#nv-rw-list");
+      const rw = brief.recentWins;
+      if (rw && rw.deals && rw.deals.length > 0) {
+        rwList.innerHTML = "";
+        rw.deals.forEach((deal) => {
+          const row = document.createElement("div");
+          row.className = "nv-rw-row";
+          const dateStr = deal.closedate
+            ? new Date(deal.closedate).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+            : "";
+          const amount = deal.amount
+            ? `$${Number(deal.amount).toLocaleString()}`
+            : "";
+          const nameHtml = deal.hubspotUrl
+            ? `<a href="${escHtml(deal.hubspotUrl)}" target="_blank" class="nv-rw-link">${escHtml(deal.dealName)} &#8599;</a>`
+            : `<span class="nv-rw-name">${escHtml(deal.dealName)}</span>`;
+          row.innerHTML = `
+            <div class="nv-rw-top">${nameHtml}${amount ? `<span class="nv-rw-amount">${amount}</span>` : ""}</div>
+            ${dateStr ? `<div class="nv-rw-date">Closed ${dateStr}</div>` : ""}
+          `;
+          rwList.appendChild(row);
+        });
+        rwSection.classList.remove("nv-hidden");
+      } else {
+        rwSection.classList.add("nv-hidden");
+      }
+
       // Similar Deals
       const sd = brief.similarDeals;
       const sdSection = $("#nv-similar-deals");
@@ -1652,6 +1687,75 @@
         color: #6b7280;
         margin-top: 2px;
         line-height: 1.3;
+      }
+
+      /* Recent Wins (30d) */
+      #nv-recent-wins {
+        margin-top: 10px;
+      }
+
+      .nv-rw-badge {
+        font-size: 9px;
+        font-weight: 700;
+        background: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+        border-radius: 6px;
+        padding: 1px 5px;
+        vertical-align: middle;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .nv-rw-row {
+        padding: 7px 10px;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        margin-bottom: 4px;
+        background: #f0fdf4;
+      }
+
+      .nv-rw-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 500;
+      }
+
+      .nv-rw-link {
+        color: #15803d;
+        text-decoration: none;
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+      }
+
+      .nv-rw-link:hover { text-decoration: underline; }
+
+      .nv-rw-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
+        color: #166534;
+        font-weight: 600;
+      }
+
+      .nv-rw-amount {
+        font-size: 11px;
+        color: #166534;
+        font-weight: 700;
+        flex-shrink: 0;
+      }
+
+      .nv-rw-date {
+        font-size: 11px;
+        color: #6b7280;
+        margin-top: 2px;
       }
 
       /* Similar Deals */
