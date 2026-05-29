@@ -502,79 +502,26 @@
     }
 
     // ── Strategy 4: innerText Experience section (most accurate, LinkedIn 2025+) ──
-    // LinkedIn's new DOM uses obfuscated classes and no #experience anchors.
-    // Parsing innerText is the most reliable way to extract from Experience.
-    // Handles both single-role and grouped (multi-role under one company) layouts.
+    // Delegates to the tested experience-parser module (loaded before this script
+    // via manifest content_scripts). It models Experience as ordered role entries
+    // and selects the TOPMOST CURRENT ("Present") role — so a prospect with several
+    // concurrent positions (e.g. "Busy Bees Asia" on top of a secondary "PADI" gig)
+    // resolves to the primary company LinkedIn surfaces first, not whichever line
+    // happened to parse first. Experience is the most accurate source, so a parsed
+    // title/company here overrides anything from og:title (which is often stale).
     {
-      const bodyText = document.body.innerText;
-      const expIdx = bodyText.indexOf("Experience\n");
-      if (expIdx >= 0) {
-        // 2000-char window (500 was too small for profiles with long descriptions above first entry)
-        const afterExp = bodyText.slice(expIdx + "Experience\n".length, expIdx + 2000);
-        const rawLines = afterExp.split("\n").map(l => l.trim()).filter(Boolean);
-        console.log("[Nat-vigator] Experience innerText lines:", rawLines.slice(0, 10));
-
-        const isDate = (t) => /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}|present)\b/i.test(t);
-        const isDuration = (t) => /\d+\s*(yr|yrs|mo|mos|year|years|month|months)\b/i.test(t);
-        const isEmploymentType = (t) => /^(full-time|part-time|contract|freelance|internship|self-employed|on-site|remote|hybrid|permanent|temporary|seasonal|apprenticeship)$/i.test(t);
-        const isLocation = (t) => /\b(on-site|remote|hybrid)\b/i.test(t) && t.length < 60;
-        const isBullet = (t) => t.startsWith("•") || t.startsWith("-") || t.startsWith("·");
-        const isUiNoise = (t) => /^\d+\s+position(s)?$/i.test(t) || /^show\s+all/i.test(t) || /^\d+\s+(role|job|experience)s?$/i.test(t);
-
-        // Grouped layout: company name appears alone, employment type follows on the next few lines.
-        // e.g. "Lendela" then "Full-time · 5 yrs 9 mos"
-        const isGroupedCompanyHeader = (idx) => {
-          for (let j = idx + 1; j < Math.min(idx + 5, rawLines.length); j++) {
-            const nl = rawLines[j].trim();
-            if (/^(full-time|part-time|contract|freelance|internship|self-employed)\b/i.test(nl)) return true;
-            if (nl.length > 2 && !isDate(nl) && !isDuration(nl) && !isEmploymentType(nl) && !isLocation(nl) && !isBullet(nl) && !isUiNoise(nl)) break;
+      const parser = (typeof globalThis !== "undefined" && globalThis.NatvigatorExperience) || null;
+      if (parser && typeof parser.parseExperienceSection === "function") {
+        try {
+          const { entries, primary } = parser.parseExperienceSection(document.body.innerText);
+          console.log("[Nat-vigator] Experience entries:", entries);
+          if (primary) {
+            if (primary.title) jobTitle = primary.title;
+            if (primary.company) companyName = primary.company;
+            console.log("[Nat-vigator] Selected primary (topmost current) role:", primary);
           }
-          return false;
-        };
-
-        // After a grouped company is found, skip city/country lines before the role title.
-        const isLikelyCity = (t) => {
-          if (t.split(" ").length > 3 || /\d/.test(t)) return false;
-          if (/\b(manager|director|vp|ceo|cto|cfo|head|lead|engineer|analyst|specialist|coordinator|executive|associate|partner|consultant|advisor|designer|developer|architect|strategist|officer|founder|president)\b/i.test(t)) return false;
-          return true;
-        };
-
-        let foundTitle = "";
-        let foundCompany = "";
-        let groupedMode = false;
-
-        for (let i = 0; i < rawLines.length; i++) {
-          if (foundTitle && foundCompany) break;
-
-          const line = rawLines[i];
-          if (isDate(line) || isDuration(line) || isEmploymentType(line) || isLocation(line) || isBullet(line) || isUiNoise(line)) continue;
-          if (line.length < 2 || line.length > 150) continue;
-
-          // Inline company: "Standard Chartered Bank · Full-time"
-          const isCompanyLine = /·\s*(full-time|part-time|contract|freelance|internship|self-employed)/i.test(line);
-          const mainPart = line.split("·")[0].trim();
-          if (!mainPart || mainPart.length < 2) continue;
-
-          if (isCompanyLine) {
-            if (!foundCompany) { foundCompany = mainPart; groupedMode = false; }
-          } else if (!foundCompany && isGroupedCompanyHeader(i)) {
-            // Grouped layout — company is on its own line
-            foundCompany = mainPart;
-            groupedMode = true;
-          } else {
-            // In grouped mode skip city/country lines before the title appears
-            if (groupedMode && !foundTitle && isLikelyCity(line)) continue;
-            if (!foundTitle) foundTitle = mainPart;
-            else if (!foundCompany) foundCompany = mainPart;
-          }
-        }
-
-        if (foundTitle && foundCompany) {
-          jobTitle = foundTitle;
-          companyName = foundCompany;
-          console.log("[Nat-vigator] Extracted from experience innerText:", { jobTitle, companyName });
-        } else if (foundTitle && !foundCompany && !jobTitle) {
-          jobTitle = foundTitle;
+        } catch (err) {
+          console.warn("[Nat-vigator] Experience parser failed:", err);
         }
       }
     }
